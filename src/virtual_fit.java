@@ -14,7 +14,6 @@ import com.garmin.fit.File;
 import com.garmin.fit.FileEncoder;
 import com.garmin.fit.FileIdMesg;
 import com.garmin.fit.Fit;
-import com.garmin.fit.FitRuntimeException;
 import com.garmin.fit.LapMesg;
 import com.garmin.fit.Manufacturer;
 import com.garmin.fit.Mesg;
@@ -63,6 +62,8 @@ stream.Close();
 
 public class virtual_fit {
 
+    private static com.garmin.fit.DateTime startTime;
+
     public static void main(String[] args) {
         try {
             // Check if filename is provided
@@ -77,6 +78,12 @@ public class virtual_fit {
             java.io.File outputFile = new java.io.File(filename);
             FileEncoder  fileEncoder = new FileEncoder(outputFile, Fit.ProtocolVersion.V2_0);
             //fileEncoder.Open(stream);
+
+            System.out.println("starting...");
+            // The starting timestamp for the activity
+            startTime = new DateTime(new Date());
+
+            writeHeaders(fileEncoder);
 
             // ready to generate fit data
             CreateTimeBasedActivity(fileEncoder);
@@ -93,36 +100,41 @@ public class virtual_fit {
         }
     }
 
+    private static DateTime generateTimestamp() {
+        return new DateTime(new Date().getTime());
+    }
+
     public static void CreateTimeBasedActivity(FileEncoder fileEncoder) {
         List<Mesg> messages = new ArrayList<Mesg>();
 
         System.out.println("run the loop");
 
-        // The starting timestamp for the activity
-        DateTime startTime = new DateTime(new Date());
-
         // add start event mesg
         EventMesg startEventMesg = createEvent(EventType.START);
         messages.add(startEventMesg);
 
+        // Print a message to indicate the start of the loop
         System.out.println("run loop");
-        // infinite loop with a sleep time of 1 sec
+
+        /**
+         * This loop runs 10 times, each time creating a new RecordMesg object and adding it to the messages list.
+         * After each iteration, the thread sleeps for 1 second.
+         */
         for (int i = 0; i < 10; i++) {
             try {
-                // create a new fit record
-                RecordMesg record = new RecordMesg();
-                record.setTimestamp(new DateTime(new Date()));
+                // Generate a new RecordMesg object
+                RecordMesg record = getRecordMesg();
 
-                // add data of various type
-                record.setDistance(100.0f);
-                record.setHeartRate((short)100);
-
-                // Write the Record message to the output stream
+                // Add the RecordMesg object to the messages list
                 messages.add(record);
 
+                // Pause the execution of the current thread for 1 second
                 Thread.sleep(1000);
+
+                // Print a message to indicate that the thread is sleeping
                 System.out.println("sleeping");
             } catch (InterruptedException e) {
+                // Print the stack trace for the InterruptedException
                 e.printStackTrace();
             }
         }
@@ -132,7 +144,7 @@ public class virtual_fit {
         messages.add(stopEventMesg);
 
         // add a minimum lap message
-        LapMesg lapMesg = addLap();
+        LapMesg lapMesg = addLap(startEventMesg.getTimestamp(), stopEventMesg.getTimestamp());
         messages.add(lapMesg);
         System.out.println("lap mesg");
 
@@ -154,6 +166,31 @@ public class virtual_fit {
     }
 
     /**
+     * This method generates a new RecordMesg object which represents a single record of heart rate data.
+     *
+     * @return RecordMesg object with a timestamp and a randomized heart rate value between 80 and 120.
+     */
+    private static RecordMesg getRecordMesg() {
+        // Create a new fit record
+        RecordMesg record = new RecordMesg();
+
+        // Set the timestamp for the record to the current time
+        record.setTimestamp(generateTimestamp());
+
+        // Initialize a new Random object
+        Random random = new Random();
+
+        // Generate a random heart rate value between 80 and 120
+        short heartRate = (short)(random.nextInt(41) + 80); // This will generate a random number between 80 and 120
+
+        // Set the heart rate for the record
+        record.setHeartRate(heartRate);
+
+        // Return the record
+        return record;
+    }
+
+    /**
      * Creates a new EventMesg object with the specified event type.
      *
      * @param eventType The type of the event. This can be either EventType.START or EventType.STOP_DISABLE.
@@ -161,7 +198,7 @@ public class virtual_fit {
      */
     public static EventMesg createEvent(EventType eventType) {
         EventMesg eventMesg = new EventMesg();
-        eventMesg.setTimestamp(new DateTime(new Date()));
+        eventMesg.setTimestamp(generateTimestamp());
         eventMesg.setEvent(Event.TIMER);
         eventMesg.setEventType(eventType);
         eventMesg.setEventGroup((short)0);
@@ -170,15 +207,18 @@ public class virtual_fit {
         return eventMesg;
     }
 
-    public static LapMesg addLap() {
+    public static LapMesg addLap(com.garmin.fit.DateTime startTime, com.garmin.fit.DateTime stopTime) {
         LapMesg lapMesg = new LapMesg();
-        lapMesg.setTimestamp(new DateTime(new Date().getTime()));
+        lapMesg.setTimestamp(generateTimestamp());
         lapMesg.setEvent(Event.LAP);
         lapMesg.setEventType(EventType.STOP);
 
         //TODO:
-        lapMesg.setTotalElapsedTime(1000.0f);
-        lapMesg.setTotalTimerTime(1000.0f);
+        // Calculate and set the total elapsed time of the lap
+        // Calculate and set the total elapsed time of the session
+        float elapseTime = (float)(stopTime.getTimestamp() - startTime.getTimestamp()) / 1000;
+        lapMesg.setTotalElapsedTime(elapseTime);
+        lapMesg.setTotalTimerTime(elapseTime);
 
         //TODO: lapMesg.setTrigger(Event.LAP_TRIGGER_MANUAL);
         //TODO: not def !
@@ -188,6 +228,8 @@ public class virtual_fit {
         lapMesg.setSubSport(SubSport.VIRTUAL_ACTIVITY);
         return lapMesg;
     }
+
+
 
     /**
      * Creates a new SessionMesg object with the specified start and stop times.
@@ -200,11 +242,8 @@ public class virtual_fit {
         SessionMesg session = new SessionMesg();
 
         // Every FIT ACTIVITY file MUST contain Record messages
-
-
-
         // Set the timestamp of the session to the start time
-        session.setTimestamp(new DateTime(new Date()));
+        session.setTimestamp(generateTimestamp());
         session.setEvent(Event.TIMER);
         session.setEventType(EventType.START);
         session.setSport(Sport.SAILING);
@@ -214,8 +253,9 @@ public class virtual_fit {
         // Set the start time of the session
         session.setStartTime(startTime);
         // Calculate and set the total elapsed time of the session
-        session.setTotalElapsedTime((float)(stopTime.getTimestamp() - startTime.getTimestamp()) / 1000);
-        session.setTotalTimerTime((float)(stopTime.getTimestamp() - startTime.getTimestamp()) / 1000);
+        float elapseTime = (float)(stopTime.getTimestamp() - startTime.getTimestamp()) / 1000;
+        session.setTotalElapsedTime(elapseTime);
+        session.setTotalTimerTime(elapseTime);
 
         return session;
     }
@@ -223,16 +263,16 @@ public class virtual_fit {
     public static ActivityMesg newActivity() {
         ActivityMesg activityMesg = new ActivityMesg();
 
-        activityMesg.setTimestamp(new DateTime(new Date().getTime()));
+        activityMesg.setTimestamp(generateTimestamp());
         activityMesg.setNumSessions(1);
         TimeZone timeZone = TimeZone.getTimeZone("Europe/Paris");
         long timezoneOffset = (timeZone.getRawOffset() + timeZone.getDSTSavings()) / 1000;
         activityMesg.setLocalTimestamp(new DateTime(new Date()).getTimestamp() + timezoneOffset);
-        activityMesg.setTotalTimerTime((float) 3600.0f);
+        activityMesg.setTotalTimerTime(3600.0f);
         return activityMesg;
     }
 
-    public static void CreateActivityFile(List<Mesg> messages, String filename, DateTime startTime) {
+    public static void writeHeaders(FileEncoder encode) {
         // The combination of file type, manufacturer id, product id, and serial number should be unique.
         // When available, a non-random serial number should be used.
         File fileType = File.ACTIVITY;
@@ -256,38 +296,13 @@ public class virtual_fit {
         deviceInfoMesg.setDeviceIndex(DeviceIndex.CREATOR);
         deviceInfoMesg.setManufacturer(Manufacturer.DEVELOPMENT);
         deviceInfoMesg.setProduct((int) productId);
-        deviceInfoMesg.setProductName("FIT Cookbook"); // Max 20 Chars
+        deviceInfoMesg.setProductName("virtual_fit"); // Max 20 Chars
         deviceInfoMesg.setSerialNumber((long) serialNumber);
         deviceInfoMesg.setSoftwareVersion(softwareVersion);
-        deviceInfoMesg.setTimestamp(startTime);
-
-        // Create the output stream
-        FileEncoder encode;
-
-        try {
-            encode = new FileEncoder(new java.io.File(filename), Fit.ProtocolVersion.V2_0);
-        } catch (FitRuntimeException e) {
-            System.err.println("Error opening file " + filename);
-            e.printStackTrace();
-            return;
-        }
+        deviceInfoMesg.setTimestamp(generateTimestamp());
 
         encode.write(fileIdMesg);
         encode.write(deviceInfoMesg);
-
-        for (Mesg message : messages) {
-            encode.write(message);
-        }
-
-        // Close the output stream
-        try {
-            encode.close();
-        } catch (FitRuntimeException e) {
-            System.err.println("Error closing encode.");
-            e.printStackTrace();
-            return;
-        }
-        System.out.println("Encoded FIT Activity file " + filename);
     }
 
 }
